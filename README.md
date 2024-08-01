@@ -12,21 +12,13 @@ Group C1= Group F4
 The code should be run as follows:
 
 1.CleaningData_Bocas2022.Rmd
-
 2.CleaningData_2016.Rmd
-
 3.Merge_alldata.Rmd
-
 4.Behavioral_classification.Rmd
-
 5.Group_counts.Rmd
-
 6.Coordination_departures_returns.Rmd
-
 7.Path_similarity_dtw.Rmd
-
 8.Overlap_between_groups.Rmd
-
 9.Activity_budgets.Rmd
 
 Note: for parts of the code either movebank accounts credentials, or stadiamps keys are needed.
