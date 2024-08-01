@@ -1,0 +1,65 @@
+---
+title: "Merge data"
+author: "Camila Calderon"
+date: "2024-06-20"
+output: html_document
+---
+
+### Load libraries
+
+```{r setup}
+pacman::p_load(dplyr, lubridate, ggplot2)
+```
+
+### Load data
+
+```{r cars}
+# 2016
+load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/bats2016_resample_clean.RData")
+
+# 2022
+load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/batsfeb_nooutliers.RData")
+
+# check column names
+names(bats_2016)
+names(batsfeb_clean)
+
+# order by id and timestamp
+batsfeb_clean <- batsfeb_clean[order(batsfeb_clean$tag_local_identifier, batsfeb_clean$timestamps),]
+```
+
+### Make all data frames match
+
+```{r, results=FALSE}
+# make columns match the two data frames
+cols <- intersect(colnames(batsfeb_clean), colnames(bats_2016))
+
+# merge data frame by row
+females_bocas <- rbind(bats_2016[,cols], batsfeb_clean[,cols])
+names(females_bocas)
+
+# add month column
+females_bocas$month <- month.abb[month(females_bocas$date)]
+
+# check for speed to see if all looks good
+hist(females_bocas$ground_speed)
+unique(females_bocas$ID_batday)
+
+# cave column
+females_bocas$cave<- "lagruta"
+
+# add year cave to the data frame
+females_bocas$year <- lubridate::year(ymd(females_bocas$date))
+females_bocas$year_cave <- paste(females_bocas$year, females_bocas$cave, sep="_")
+females_bocas$year_month<- paste(females_bocas$year, females_bocas$month, sep="_")
+females_bocas$year_cave[which(females_bocas$year_month=="2022_Feb")] <- "2022_lagruta_Feb"
+females_bocas$year_cave[which(females_bocas$year_month=="2022_Jan")] <- "2022_lagruta_Feb"
+unique(females_bocas$year_cave)
+
+# count how many females per year
+table(females_bocas$year_cave, females_bocas$tag_local_identifier)
+
+# save
+save(females_bocas, file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/clean_female_data.RData")
+```
+

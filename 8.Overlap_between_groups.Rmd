@@ -1,0 +1,369 @@
+---
+title: "Foraging area/overlap between groups in 2022"
+output: html_document
+date: "2024-07-25"
+Author: Camila Calderon
+---
+
+### Load packages
+
+```{r setup, include=FALSE}
+pacman::p_load(ctmm, tidyverse, lubridate, ggplot2, move, doBy, ggmap, spatialrisk, plotly)
+```
+
+### Load data
+
+```{r load, results="hide", include=TRUE}
+load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/paper2/analysis/data/females_HMMbehaviors.RData")
+
+unique(females_bocas$cave)
+
+# adding counts to each consecutive point of foraging and commuting
+females_bocas$n <- NA
+
+r <- rle(females_bocas$behav)
+
+for(i in 1:length(r$lengths)){
+  #if(r$values[i] == "commuting"){
+  start <- {}
+  end <- {}
+  try(start <- sum(r$lengths[1:(i-1)])+1)
+  if(i == 1) start <- 1
+  end <- sum(r$lengths[1:i])
+  
+  females_bocas$n[start:end] <- r$lengths[i]
+}
+
+
+# foraging points from la gruta dry 2016 and 2022 where they stay longer than 8 minutes
+females_foraging <- females_bocas %>%
+  filter((behav=="foraging" & n>=4))
+
+# plot foraging points
+mapview::mapView(females_foraging, xcol="location_long", ycol="location_lat", zcol="tag_local_identifier", legend=F, crs="EPSG:4326")
+
+```
+
+### Remove foraging points inside Isla Colón
+
+```{r pressure, results="hide", message=FALSE, warning=FALSE}
+
+# set coordinates in middle of the roost - La Gruta
+roostlagruta <- data.frame(location.lat=9.396448, location.long=-82.271541)
+
+# selecting foraging points based on the radios by taking la Gruta as a reference point
+roostpointGruta <- points_in_circle(females_foraging, roostlagruta$location.long,roostlagruta$location.lat, radius = 6500, lon=location_long,lat=location_lat)
+
+# remove island foraging points from the data frame
+foragingall_noisla <- females_foraging[!(females_foraging$event_id %in% roostpointGruta$event_id),] 
+
+# plot without in island points
+plot(foragingall_noisla$location_long, foragingall_noisla$location_lat)
+
+# check unique IDs
+unique(foragingall_noisla$date)
+
+# create a list
+bats.cave_ls <- split(foragingall_noisla, foragingall_noisla$ID)
+
+# filter to have only id_days with more than 10 points to be able to calculate AKDE
+bats.cave_ls <- Filter(function(bats.cave_ls) nrow(bats.cave_ls) > 10, bats.cave_ls)
+
+# convert to data frame again
+bats.cave_clean <- do.call(rbind, bats.cave_ls)
+
+# plot foraging points of filtered data frame
+ggplot(aes(x=location_long, y=location_lat, color=year_cave), data=bats.cave_clean)+geom_point()
+
+```
+
+### Convert to telemetry object using only 2022 data
+
+```{r convert to telemetry}
+# data frame with only tracking from February
+bats_feb <- bats.cave_clean %>% 
+ filter(date> "2022-01-01" & date < "2022-03-01")
+names(bats_feb)
+
+# save(bats_feb_idday, file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/analysis/data/bats_feb_idday.RData")
+
+## convert to telemetry object
+# here we remove columns with different id names to use the column tag_local_identifier to convert to telemetry object
+tele.feb <- as.telemetry(bats_feb[,c(-12,-24,-34,-42,-44,-46,-64)])
+tele.feb[[1]]@info$projection
+```
+
+### Calculate fits for the telemery object
+
+```{r foraging area overlaps}
+# include error
+uere(tele.feb) <- 20
+
+# include two-point equidistant projection
+ctmm::projection(tele.feb) <- median(tele.feb, k=2)
+
+# fits calculation
+FITS <- lapply(tele.feb, function(x){
+  print(x)
+  SVF <- variogram(x)#, dt = c(2, 1440 %#% "minutes"))
+  GUESS <- ctmm.guess(x, CTMM=ctmm(error=TRUE), interactive=FALSE)
+  FITS <- ctmm.select(x,GUESS,trace=3,cores=2, verbose=T)
+  return(FITS)
+})
+
+# check for projection
+projection(FITS) 
+
+# rename fits according to the telemetry object
+names(FITS) <- names(tele.feb)
+
+# save fits
+save(FITS,file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/fits_all_Feb_20240412.RData")
+#load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/fits_all_Feb_20240412.RData")
+```
+
+### Calculate UDs for all individuals
+
+```{r}
+# calculates UDS
+# shared grid for UD calculations
+ex <- extent(tele.feb)
+ex$x <- round(ex$x/500 + c(-10,10))*500
+ex$y <- round(ex$y/500 + c(-10,10))*500
+
+# check projection
+proj.all <- tele.feb[[1]]@info$projection
+
+# set grid
+grid <- list(dr=c(500,500), extent=raster:::extent(ex$x, ex$y))
+
+# i=1
+
+# UD calculation
+UDS <- lapply(1:length(tele.feb), function(i){
+  id <- names(tele.feb[i])
+  akde(tele.feb[[i]],FITS[[i]], weights=TRUE, grid=grid)
+})
+
+# rename UDs according to the telemetry object
+names(UDS) <- names(tele.feb)
+
+# save UDs
+save(UDS,file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/UDS_all_Feb_20240412.RData")
+#load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/UDS_all_Feb_20240412.RData")
+
+# plot UDs
+plot(UDS)  
+
+```
+
+
+### Overlap between and within groups from 2022
+
+Here I calculate the Bhattacharyya coefficient which is a useful measure of similarity between distributions. It is roughly speaking the ratio of the intersection area to the average individual area, but it is a direct comparison between the density functions and does not require an arbitrary quantile to be specified. When applied to ctmm objects, this function returns the overlap of the two Gaussian distributions. When applied to aligned UD objects with corresponding movement models, this function returns the overlap of their (autocorrelated) kernel density estimates (from ctmm package).
+
+I calculate the overlap by individuals pooling all days of one individual together.
+
+```{r}
+# calculate overlap
+BA_ud95 <- overlap(UDS, level=.95) 
+BA_ud50 <- overlap(UDS, level=.50) 
+BA_ud20 <- overlap(UDS, level=.20) 
+
+# convert to data frame
+library(reshape2)
+BA_ud95_df <- melt(BA_ud95$CI[,,"est"])
+
+# remove duplicates
+BA_ud95_df <- BA_ud95_df[!duplicated(BA_ud95_df$value),]
+
+# remove comparison between same ID
+BA_ud95_df <- BA_ud95_df[BA_ud95_df$Var1!=BA_ud95_df$Var2,]
+
+# add group and id to the table
+BA_ud95_df <- BA_ud95_df %>%
+   mutate(id1 = str_sub(Var1, 1,10),id2 = str_sub(Var2, 1,10),
+         group1 = str_sub(Var1,10,10), group2 = str_sub(Var2,10,10),
+         groups=paste(group1,group2, sep="_"))
+
+# change groups
+BA_ud95_df$groups[which(BA_ud95_df$groups=="D_G")] <- "G_D"
+
+# verify groups
+unique(BA_ud95_df$groups)
+```
+
+### Plot overlap between groups
+
+```{r}
+# Fig 4B overlap error bar plot
+overlap_feb <- ggplot(aes(x=groups, y=value, color=groups), data=BA_ud95_df) +
+  geom_jitter(position = position_jitterdodge(jitter.width = 0.2))+
+  scale_x_discrete(breaks=c("D_D", "G_D","G_G"),labels=c("F1", "F1F2","F2"))+
+  scale_colour_manual(values = c("#440154FF","grey", "#FDE725FF")) +
+  stat_summary(fun = mean, color="black") +
+  stat_summary(
+    fun.min = function(x) mean(x) - sd(x), 
+    fun.max = function(x) mean(x) + sd(x), 
+    geom = "errorbar",
+    color="black",
+    width = .3
+  ) +
+  ylab("BA")+
+  theme_classic()+
+  theme(legend.position = "none")
+
+overlap_feb
+
+ggsave(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig4B.pdf")
+```
+
+### Test overlap between and within groups using a logistic regression
+
+```{r}
+library(lme4)
+library(glmmTMB)
+library(DHARMa)
+
+head(BA_ud95_df)
+str(BA_ud95_df)
+
+# create dyad column and samegroup column
+BA_ud95_df <- BA_ud95_df %>%
+  mutate(samegroup=ifelse(group1 == group2, "yes", "no"), dyad=paste(Var1,Var2, sep="_"))
+
+
+# removing zero values
+BA_ud95_df$value[which(BA_ud95_df$value==0)] <- 0.001
+BA_ud95_df$samegroup <- factor(BA_ud95_df$samegroup, levels = c("yes","no"))
+
+# model
+mod_ba_beta <- glmmTMB(value ~ samegroup + (1|dyad),
+                       data = BA_ud95_df,
+                       family = beta_family(link = "logit"))
+
+# summary of the model
+summary(mod_ba_beta)
+
+# convert values of the model to percentages/proportions
+logit_to_prob <- function(logit) {
+  exp(logit) / (1 + exp(logit))
+}
+
+# assuming your model intercept and coefficient for samegroupno are as follows
+intercept_logit <- -1.4773
+coef_samegroupno <- 0.1339
+
+# Calculate probabilities
+prob_intercept <- logit_to_prob(intercept_logit)  # probability when dyads are in the same group
+prob_samegroupno <- logit_to_prob(intercept_logit + coef_samegroupno)  # not in the same group
+
+# print the results
+print(paste("Probability when dyads are in the same group:", prob_intercept))
+print(paste("Probability when dyads are not in the same group:", prob_samegroupno))
+
+```
+ 
+### Plot figure 4A
+
+```{r plotting areas in a map}
+library(sf)
+######################################################################
+############  Plotting and AKDE HR on a map for February ##############
+######################################################################
+
+# remove id in which AKDE was not well calculated
+UDS_sub <- UDS[names(UDS) %in% c("22507B4E_D")==FALSE]
+
+# change UD list to sf object (mean contour only) and switch to lat long coords
+UD_sf <- UDS_sub  %>% 
+  purrr::map(ctmm::as.sf, level.UD = 0.95) %>% 
+  reduce(rbind) %>% 
+  mutate(id = rep(names(UDS_sub), each = 3),
+         group = str_sub(id,10)) %>% #year = as.numeric(str_sub(id,4,7)
+  filter(str_detect(name, "est")) %>% 
+  dplyr::select(id, group, geometry) %>% 
+  st_transform(crs = "+proj=longlat +datum=WGS84")
+
+# transform confidence intervals to an sf object
+CI_sf <-  UDS_sub  %>% 
+  purrr::map(ctmm::as.sf, level.UD = 0.95) %>% 
+  reduce(rbind) %>% 
+  mutate(id = rep(names(UDS_sub), each = 3),
+         group = str_sub(id,10)) %>% #year = as.numeric(str_sub(id,4,7)
+  filter(!str_detect(name, "est")) %>% 
+  dplyr::select(id,group, geometry) %>% 
+  st_transform(crs = "+proj=longlat +datum=WGS84")
+
+
+# remove id in which AKDE was not well calculated
+tele.feb_sub <- tele.feb[names(tele.feb) %in% c("22507B4E_D")==FALSE]
+
+# first change data into sf object as well to plot with UDs
+DATA_sf <- tele.feb_sub %>%
+  purrr::map(ctmm::as.sf) %>% 
+  reduce(rbind) %>% 
+  mutate(id = identity,
+         group = str_sub(id,10)) %>% 
+  dplyr::select(id,group, geometry) %>% 
+  st_transform(crs = "+proj=longlat +datum=WGS84")
+
+
+# register stamen map
+register_stadiamaps("myownkey") 
+
+# create a bounding box for the map
+e <- make_bbox(location_long, location_lat, data = bats_feb, f = .70)
+
+# figure 4A - map by group
+library(scales)
+show_col(viridis_pal()(5))
+
+Uds_map_feb <- get_stadiamap(e, zoom = 12, maptype = "stamen_terrain") %>% ggmap()+
+  geom_sf(data = CI_sf, 
+          aes(fill=group, color=group, alpha = 0.02, size = 0.3),
+          #color = "black", 
+          linetype = "dashed", 
+          inherit.aes = FALSE) +
+          #alpha = 0.02, 
+          #size = 0.3) +
+  geom_sf(data = UD_sf,
+          aes(fill=group, color=group),
+          inherit.aes = FALSE, 
+          alpha = 0.3, 
+          size = 0.3) +
+  geom_sf(data = DATA_sf,
+          aes(color=group, alpha= 0.03),
+          size = 0.5, 
+          inherit.aes = FALSE) +
+  scale_colour_manual(values = c("#440154FF", "#FDE725FF")) +
+  scale_fill_manual(values = c("#440154FF", "#FDE725FF")) +
+  ggspatial::annotation_scale(location = "bl", 
+                              width_hint = 0.3,
+                              height = unit(4,'pt'),
+                              style = 'ticks', text_cex =1) +
+# coord_sf(xlim=c(-85.39,-85.35), ylim=c(10.495, 10.542)) + # can use this to trim the map to particular groups
+  guides(color=guide_legend(override.aes=list(size = 3)))+
+  xlab("longitude")+
+  ylab("latitude")+
+  theme(legend.position="none", 
+        legend.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank())
+  #facet_wrap(~group) # could use group instead, or remove if you would rather all in one plot
+Uds_map_feb 
+
+ggsave("/Users/ccalderon/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig4A.pdf") 
+```
+
+# Plot figure 4 - composite
+
+```{r}
+library(patchwork)
+
+((Uds_map_feb + overlap_feb) + plot_annotation(tag_levels = "A") & 
+               theme(plot.tag  = element_text(face = 'bold', size=24), axis.title = element_text(face = 'bold', size=20), axis.title.x = element_text(size = 20), axis.title.y=element_text(size=20), axis.text.y = element_text(size=10), axis.text.x = element_text(size=10)))
+
+ggsave("/Users/ccalderon/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/analysis/results/figures/Fig4.pdf", width=15, height=7) 
+```

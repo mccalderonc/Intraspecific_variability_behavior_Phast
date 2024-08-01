@@ -1,0 +1,348 @@
+---
+title: "Dynamic Time Warping (DTW) to calculate path similarity"
+output: html_document
+date: "2024-07-25"
+Author: Camila Calderon
+---
+
+### Load libraries
+
+```{r setup, warning=FALSE, message=FALSE}
+library(dtw)  # dynamic time warping
+library(sp)  # handle spatial objects
+library(rgeos)# geoprocessing functions
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(dtwclust)
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+library(move)
+library(tidyverse)
+library(ggmap)
+```
+
+### Load data
+
+```{r loading, results='hide'}
+load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/females_HMMbehaviors.RData")
+
+# order data frame
+females_bocas <- females_bocas[order(females_bocas$tag_local_identifier, females_bocas$timestamp),]
+```
+
+
+### Select commuting tracks to the foraging spots from the La Gruta colony groups
+
+harem/group D= group F1 in the manuscript
+harem/group C1D= group F1 in the manuscript
+harem/group G= group F2 in the manuscript
+
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+# adding a variable that counts the length of consecutive commuting and foraging points. This will be used to filter only commuting tracks that contain 5 or more points in a row
+females_bocas$n <- NA
+r <- rle(females_bocas$behav)
+i=1
+for(i in 1:length(r$lengths)){
+  #if(r$values[i] == "commuting"){
+      start <- {}
+      end <- {}
+      try(start <- sum(r$lengths[1:(i-1)])+1)
+      if(i == 1) start <- 1
+      end <- sum(r$lengths[1:i])
+
+      females_bocas$n[start:end] <- r$lengths[i]
+}
+
+# filter only commuting with less than 5 points in a row
+bats_commu <- females_bocas %>% 
+  filter(behav=="commuting" & n>=5)
+
+# add time difference to split commuting tracks by the ID_batday
+bats_commu <- bats_commu %>%
+  group_by(ID_batday) %>%
+  mutate(diff = timestamps - lag(timestamps))
+bats_commu$diff <- as.numeric(bats_commu$diff)# if its already second don't need to multiply by 60
+bats_commu$diff[is.na(bats_commu$diff)] <- 0
+
+# filter February data
+commu_feb <- bats_commu%>%
+  filter(date>="2022-01-31" & date<="2022-02-10")
+
+# splitting tracks by ID
+commu.split <- split(commu_feb, f=commu_feb$ID)
+
+# for loop to divide each individual night in commuting outbound and commuting inbound using different seconds thresholds
+mylist <- list() 
+for (i in 1:length(commu.split)){
+  x <- which(commu.split[[i]]$diff>=1000 & commu.split[[i]]$diff<=1100 | commu.split[[i]]$diff>=1500 & commu.split[[i]]$diff<=2200 |commu.split[[i]]$diff>=2800 & commu.split[[i]]$diff<=2900 | commu.split[[i]]$diff>=4000)
+  mylist[[i]] <- split(commu.split[[i]], cumsum(1:nrow(commu.split[[i]])%in%x))
+  indv <- unique(names(commu.split[i]))
+  names(mylist[[i]]) <- paste(indv, seq_along(mylist[[i]]), sep = "_")
+  }
+
+# convert nested list to data frame
+find_df <- function(x) {
+  if (is.data.frame(x))
+    return(list(x))
+  if (!is.list(x))
+    return(NULL)
+  unlist(lapply(x, find_df), FALSE)
+}
+
+data <- find_df(mylist)
+
+# add name column to list
+f <- function (data, name){
+  data$name <- name
+  data
+}
+
+data <- Map(f, data, names(data))
+
+# convert list to dataframe
+data.commu <- as.data.frame(do.call(rbind, data))
+
+# select only outbound commuting
+data.commu.out <- data.commu[grep("_1", data.commu$name),]
+unique(data.commu.out$name)  
+
+# plot outbound commutes
+ggplot(aes(x=location_long, y=location_lat, color=group_id), data=data.commu.out)+geom_point()
+
+# select only inbound commuting
+data.commu.in <- data.commu[grep("_1", invert=TRUE,data.commu$name),]
+unique(data.commu.in$name)  
+
+# filter to data that will be used
+unique(data.commu.out$date)
+```
+
+### Plot outbound commutes to use
+
+```{r, message=FALSE, warning=FALSE}
+# pdf(file = "~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/analysis/results/dtw/idDay.pdf")
+# lapply(data.commu.out, function(x){
+#   ggplot(aes(x=coords.x1.1, y=coords.x2.1, color=as.factor(date)), data=x)+
+#     geom_point()+
+#     ggtitle(x$tag_local_identifier)
+# })
+# while (!is.null(dev.list()))  dev.off()
+
+```
+
+
+### Pairwise comparison of path similarity of outbound commutes for all individuals in 2022 by date
+
+This code is adapted from this example <https://rpubs.com/janoskaz/10351>, which basically does the same as dtw function.
+
+Euclidean and DTW distances are both classified as shape based. This type takes into account the overall shape and matches time series based on that aspect. It is a whole time series analysis. Good explanation of DTW <https://rpubs.com/esobolewska/dtw-time-series>
+
+```{r, message=FALSE}
+# split data by date
+feb_date <- split(data.commu.out, f = data.commu.out$date)
+
+# compute DTW distances within each day between different individuals
+results_list <- lapply(names(feb_date), function(date) {
+  day_data <- feb_date[[date]]
+  
+  # split data by individual within the day
+  indiv_splits <- split(day_data, day_data$tag_local_identifier)
+  
+  # create all pairwise combinations of individuals for the day
+  pairs <- expand.grid(names(indiv_splits), names(indiv_splits))
+  pairs <- subset(pairs, Var1 != Var2)
+  
+# compute DTW distance for each pair of individuals
+  dtw_distances <- mapply(function(ind1, ind2) {
+    dtw_result <- dtw(indiv_splits[[ind1]][, c("location_lat", "location_long")],
+                      indiv_splits[[ind2]][, c("location_lat", "location_long")],
+                      keep.internals = TRUE)
+    dtw_result$distance  # extracting the DTW distance
+  }, pairs$Var1, pairs$Var2, SIMPLIFY = FALSE)
+  
+  # combine the results with pair information and include the date
+  data.frame(Date=date, pairs, Distance = unlist(dtw_distances))
+})
+  
+
+# combine results from all days
+all_results <- do.call(rbind, results_list)
+
+# save results
+# save(all_results, file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/analysis/data/dtw_feb_bydate.RData")
+
+# add columns of groups id and categorical variable of same group= yes/no
+all_results <- all_results %>%
+  mutate(group1= str_sub(Var1, 10,10), group2= str_sub(Var2, 10,10)) %>%
+  mutate(samegroup=ifelse(group1 == group2, "yes", "no"), dyad=paste(Var1,Var2, sep="_"), group=paste(group1,group2, sep="_"))
+
+# change labels of groups
+all_results$group[which(all_results$group=="D_G")] <- "G_D"
+
+# quickly plot a cluster for all to visualize
+h <- hclust(as.dist(xtabs(Distance ~ Var1 + Var2, data = all_results)), method = "complete")
+fviz_dend(h, k = 3,color_labels_by_k = FALSE, rect = TRUE)
+
+#all_results_sl <- split(all_results, f=all_results$Date)
+# 
+# # Convert results to a distance matrix, if necessary, and perform clustering
+# dist_matrix <- lapply(all_results_sl, function(x){
+#   as.dist(xtabs(Distance ~ Var1 + Var2, data = x))
+# })
+# 
+# hc <- lapply(dist_matrix, function(x){
+#   hclust(x, method = "complete")
+# }
+# )
+# 
+# # Plot the hierarchical clustering, if needed
+# lapply(hc, function(x){
+#    fviz_dend(x, k = 3,color_labels_by_k = FALSE, rect = TRUE)
+# })
+```
+
+### Test path similarity (DTW) with a GLMM
+
+Test if there is more variability within individuals of the same group than between individuals from different groups
+
+```{r, results=FALSE, message=FALSE}
+library(moments)
+# descriptive statistics
+mean(all_results$Distance)
+median(all_results$Distance)
+var(all_results$Distance)
+skewness(all_results$Distance)
+kurtosis(all_results$Distance)
+
+# normality test
+shapiro.test(all_results$Distance) # not normally distributed
+
+# we can use other packages for different distributions
+library(fitdistrplus)
+fit <- fitdist(all_results$Distance, "weibull")  # change "weibull" to other distributions
+summary(fit)
+gofstat(fit)
+
+# diagnostic plots
+plot(fit)
+cdfcomp(fit)
+qqcomp(fit)
+
+# fit multiple distributions
+fit_norm <- fitdist(all_results$Distance, "norm")
+fit_gamma <- fitdist(all_results$Distance, "gamma")
+fit_weib <- fitdist(all_results$Distance, "weibull")
+
+# compare fits visually
+# assuming fit_norm has estimated parameters mean (mle) and standard deviation (sd)
+plotdist(all_results$Distance, "norm", para = list(mean = fit_norm$estimate["mean"], sd = fit_norm$estimate["sd"]), histo = TRUE, demp = TRUE)
+cdfcomp(list(fit_norm, fit_gamma, fit_weib), legendtext = c("Normal", "Gamma", "Weibull"))
+# gamma is the best distribution
+
+# test model with a Gamma distribution
+library(lme4)
+
+# make samegroup a factor variable
+all_results$samegroup <- factor(all_results$samegroup, levels=c("yes","no"))
+
+# gamma model
+mod_bw <- glmer(Distance~samegroup + (1|dyad), family = Gamma("log"), data=all_results)
+
+# model summary
+mod_bw 
+summary(mod_bw)
+plot(mod_bw)
+```
+
+### Plot results of the model
+
+```{r}
+# create a new data frame for prediction
+new_data <- all_results
+new_data$predicted_distance <- predict(mod_bw, new_data, type = "response")
+
+# plotting model results
+dist_sim <- ggplot(new_data, aes(x = samegroup, color = group, group=samegroup, alpha=0.8)) +
+  geom_jitter(aes(y = Distance), position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0.1))+
+  scale_colour_manual(values=c("#440154FF","grey", "#FDE725FF"))+
+  stat_summary(aes(y=predicted_distance, group=samegroup),fun = mean, color="black") +#FF9999
+  stat_summary(aes(y=predicted_distance, group=samegroup),fun.data = "mean_sdl",
+    geom = "errorbar",
+    color="black",
+    width = .3
+  ) +
+  labs(
+    x = "same group",
+    y = "distance \n similarity"
+  ) +
+  theme_classic()+
+  theme(legend.position = "none")
+
+dist_sim 
+```
+
+Independent of the group membership, the DTW index of commuting paths within and between groups did not differ. 
+
+### Figure 3
+
+```{r, warning=FALSE, message=FALSE}
+library(ggnewscale)
+library(sf)
+
+# add columns with the coordinate of the caves
+cave <-data.frame(x= -82.271541, y=9.396448) 
+
+projcrs <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+cave_sf <- st_as_sf(x = cave,                         
+           coords = c("x", "y"),
+           crs = projcrs)
+
+
+# plot using stamen map from Bocas
+register_stadiamaps("useownkey") 
+
+# create a bounding box
+e <- make_bbox(location_long, location_lat, data = feb, f = .4)
+
+# create group variable
+data.commu.out$group <- NA
+data.commu.out$group[data.commu.out$group_id=="haremD-lagruta"] <- "haremD"
+data.commu.out$group[data.commu.out$group_id=="haremC1D-lagruta"] <- "haremD"
+data.commu.out$group[data.commu.out$group_id=="haremG-lagruta"] <- "haremG"
+
+# convert to sf object
+feb_sf <- st_as_sf(x = data.commu.out,                         
+           coords = c("location_long.1", "location_lat.1"),
+           crs = projcrs)
+
+# map with commuting tracks
+commute_plot <- get_stadiamap(e, zoom = 12, maptype = "stamen_terrain") %>% ggmap()+
+  # geom_sf(data=feb_sf,
+  #         aes(color=cave_group,  group = ID, linetype="dashed"),
+  #         inherit.aes = FALSE)+
+  geom_path(aes(x=location_long, y=location_lat, color=group, group=ID), data=feb_sf)+
+  xlim(c(-82.55,-82.2))+
+  scale_colour_manual(values = c("#440154FF", "#FDE725FF")) +
+  ggspatial::annotation_scale(location = "bl",
+                              width_hint = 0.3,
+                              height = unit(4,'pt'),
+                              style = 'ticks') +
+  new_scale_color() +
+  geom_sf(data=cave_sf,
+          aes(alpha = 0.9), size=6, color="black",
+          inherit.aes = FALSE)+
+  xlab('longitude')+
+  ylab('latitude')+
+  theme(legend.position = "none")
+
+commute_plot
+
+#  Fig 3: to run figure 3, code #6 that contains Fig3bc needs to be run first
+library(patchwork)
+
+((commute_plot/ (Fig3bc | dist_sim)) + plot_layout(widths = unit(c(1,1),  c("null","null"))) + plot_layout(axis_titles = "collect") + plot_annotation(tag_levels = "A") &
+theme(plot.tag  = element_text(face = 'bold', size=20), axis.title = element_text(face = 'bold', size=20), axis.title.x = element_text(size = 20), axis.title.y=element_text(size=20), axis.text.y = element_text(size=14), axis.text.x = element_text(size=14), legend.title = element_text(size=16), legend.text = element_text(size=16)))
+
+ggsave(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig3.pdf", width=15, height=10)
+```

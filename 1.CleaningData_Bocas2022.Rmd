@@ -1,0 +1,89 @@
+---
+title: "Cleaning data Bocas 2022"
+output: html_document
+date: '2024-07-24'
+author: "Camila Calderon"
+---
+
+## load packages
+
+```{r setup, include=FALSE}
+pacman::p_load(tidyverse,data.table, move, lubridate, cowplot, ggplot2, doBy, dplyr,  ggpubr, spatialrisk, rgdal, janitor, ISLR)
+```
+
+### Loading movebank data from 2021-2022
+
+```{r data from movebank}
+# download from movebank
+me <- movebankLogin(username="Myaccount", password="mypassword")# use own credentials
+studyId <- getMovebankID("Greater spear-nosed bat (Phyllostomus hastatus) in Bocas del Toro 2021-2022",me)
+batsmove<- getMovebankData(study=studyId, login=me)
+batsdf <- as.data.frame(batsmove)
+unique(batsdf$tag_local_identifier)
+```
+
+### Filter only february data and females
+
+```{r remove outliers, include=TRUE}
+# select only females from February
+bats_feb <- batsdf %>%
+  filter(date(timestamp)>="2022-01-01", date(timestamp)<="2022-03-01" & sex=="f")
+
+# changing timestamp to Posixct class
+bats_feb$timestamp <- as.POSIXct(bats_feb$timestamp, format = "%Y-%m-%d %H:%M:%S", tz ="UTC")
+
+# plot 
+plot(bats_feb$location_long, bats_feb$location_lat)
+```
+
+### Removing some individuals with no good data
+
+```{r}
+# add ID variable before splitting
+bats_feb$ID <- paste0(bats_feb$tag_local_identifier, "_", date(bats_feb$timestamp))
+
+# split data frame
+bats_feb_day <- split(bats_feb, bats_feb$ID)
+
+# remove individual days where data was not good 
+batsclean <- bats_feb_day[names(bats_feb_day) %in%  c("0C506E35_C_2021-12-10", "0C506E35_C_2021-12-11", "22507B4E_D_2022-02-01", "2C500235_D_2022-02-13", "38506D37_D_2022-02-03", "0D501435_C_2021−12−09", "2D507235_G.2022-01-31", "37507537_D_2022-02-01",  "38506D37_C_2021-12-09",  "38506737_G_2022-01-30",   "39500E37_D_2022-02-01", "39500E37_D_2022-02-02")== FALSE]
+
+batsfeb_clean <- do.call(rbind, batsclean)
+
+# convert again to move object to calculate all movement variables
+bat2022move <-  move(x=batsfeb_clean$location_long, y=batsfeb_clean$location_lat, 
+     time=as.POSIXct(batsfeb_clean$timestamp, format="%Y-%m-%d %H:%M:%S", tz="UTC"), 
+     data=batsfeb_clean, proj=CRS("+proj=longlat +ellps=WGS84"), 
+     animal=batsfeb_clean$tag_local_identifier, sensor="GPS")
+
+# add movement parameters
+moveList <- lapply(split(bat2022move), function(myInd){
+  datechange <- c(0, abs(diff(as.numeric(as.factor(date(myInd@timestamps-(12*60*60)))))))
+  myInd$BatDay <- cumsum(datechange)+1
+  myInd$tlag <- c(NA, move::timeLag(myInd, units="secs"))
+  myInd$step <- c(NA, move::distance(myInd))
+  myInd$tag_ground_speed <- myInd$ground_speed
+  myInd$ground_speed <- c(NA, move::speed(myInd))
+  myInd$angle <- c(NA, angle(myInd))
+  return(myInd)
+})
+
+bats2022 <- moveStack(moveList, forceTz="UTC")
+
+bats2022 <- spTransform(bats2022, CRS("+proj=utm +zone=17 +datum=WGS84"))
+crds <- as.data.frame(bats2022@coords)
+bats2022$x <- crds$coords.x1 #27
+bats2022$y <- crds$coords.x2 #28
+
+# convert to dataframe
+batsfeb_clean <- as.data.frame(bats2022)
+
+# add date column
+batsfeb_clean$date <- date(batsfeb_clean$timestamps)
+
+# add id_batday column 
+batsfeb_clean$ID_batday <- paste(batsfeb_clean$tag_local_identifier, batsfeb_clean$BatDay, sep="_")
+
+save(batsfeb_clean, file="~/ownCloud/PhDLife/P.hastatus/Thesis/paper2/analysis/data/batsfeb_nooutliers.RData")
+```
+

@@ -1,0 +1,87 @@
+---
+title: "Harem/group counts"
+author: "Camila Calderon"
+date: "2024-07-30"
+output: html_document
+---
+
+### Load packages
+
+```{r setup}
+pacman::p_load(readxl, tidyverse, dplyr)
+```
+
+### Load data
+
+```{r counts}
+# set working directories
+setwd("/Users/ccalderon/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/")
+
+# load excel file
+counts <- read_xlsx("counts_lagruta.xlsx")
+```
+
+### Filter groups with good data
+
+Note that groups originally have a different name. For the purpose of this manunscript we named the groups accordingly in a column called new_group.
+
+Group D= F1
+Group G= F2
+Group B= F3
+Group C1= F4
+
+```{r}
+harems <- counts %>%
+  filter(group=="harem" & use=="yes")
+
+#add disturbed column to know when bats where disturbed due to capture events
+harems$disturbed <- "no" 
+harems$disturbed[which(harems$group_number=="C1" & harems$date=="17.11.2021")] <- "yes"
+harems$disturbed[which(harems$season== "dry" & harems$group_number=="C2")] <- "yes"
+harems$disturbed[which(harems$season== "wet" & harems$group_number=="D" & harems$date=="13.12.2021")] <- "yes"
+```
+
+### Summary of the counts by group/harem
+
+```{r, warning=FALSE, message=FALSE}
+sum_counts <- harems %>%
+  group_by(group_number) %>%
+  filter(count_id!="NA")%>%
+  dplyr::summarise(count_mean=mean(as.numeric(count_id)), sd=sd(as.numeric(count_id)))
+
+meantotal_counts <- harems %>%
+  filter(count_id!="NA")%>%
+  dplyr::summarise(count_mean=mean(as.numeric(count_id)), sd=sd(as.numeric(count_id)))
+```
+
+### Plot count by date
+
+```{r, warning=FALSE}
+# format date
+harems$date <- as.Date(harems$date, format="%d.%m.%Y")
+# add Na to be able to remve it
+harems$count_id[which(harems$count_id=="NA")] <- NA
+# remove Na's
+harems <- harems[!is.na(harems$count_id),]
+# remove one of the counts which never had data
+harems <- harems[harems$group_number!="C2",]
+
+
+# make group number an order factor
+harems$group_number_f <- factor(harems$new_group, levels= c("F1", "F2", "F3", "F4"))
+
+# plot
+ggplot(aes(x=date, y=as.numeric(count_id), color=group_number_f, group =group_number_f, shape=disturbed), data=harems)+
+  geom_point(size=3, alpha=0.8)+
+  geom_path()+
+  scale_color_manual(name="group", values = c("#440154FF", "#FDE725FF", "#3B528BFF", "#21908CFF"))+
+  geom_vline(data = filter(harems, disturbed == "yes"), aes(xintercept = as.numeric(date), color=group_number_f), color=c("#21908CFF","#440154FF"), size=0.9, linetype="dotted") +
+  ylab('No. of individuals')+
+  theme_classic()+
+  theme(legend.position = "bottom")
+
+#save figure 2A
+ggsave("/Users/ccalderon/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig2A.tiff")
+
+```
+

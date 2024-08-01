@@ -1,0 +1,199 @@
+---
+title: "HMM behaviors"
+author: "Camila Calderon"
+date: "2024-07-25"
+output: html_document
+---
+
+### Load libraries
+
+```{r setup}
+pacman::p_load(momentuHMM, tidyverse, lubridate, parallel, mixtools,ggmap, adehabitatLT)
+```
+
+### HMM for all female data from 2016 and 2022 with GPS fix rate every 2 minutes
+
+```{r, results=FALSE}
+# load data
+load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/clean_female_data.RData")
+
+# if step and angle are present need to be removed
+names(females_bocas)
+females_bocas <- females_bocas[!names(females_bocas) %in% c("step", "angle")]
+
+# order by timestamp and ID
+females_bocas <- arrange(females_bocas, ID_batday,timestamp)
+
+# create ADE trajectory with NAs every 2 minutes for all individuals. I decided not to interpolate as it was creating unrealistic tracks. 
+
+# add NA's every 2 minutes
+df_na <- setNA(ltraj = as.ltraj(xy=females_bocas[, c("x", "y")], date = females_bocas$timestamp, id=females_bocas$ID_batday), date.ref =females_bocas$timestamp[1], dt=2, tol=2, units="min")
+
+# convert ltraj object to dataframe
+df <- ld(df_na)[,c("x","y", "id","date")]
+
+# split data frame by id
+bats.split <- split(df, df$id)
+
+# process data with Prepdata
+batsData<- lapply(bats.split, function(x){
+  momentuHMM::prepData(x, type = 'UTM', coordNames = c('x', 'y'))
+})
+
+# rename the id column with right id
+batsData <- lapply(1:length(batsData), function(i){
+  id_day <- names(batsData[i])
+  batsData[[i]]$ID <- id_day
+  return(batsData[[i]])
+})
+
+# to check steps from one id
+hist(batsData[[40]]$step)
+
+# plotting to see step lengths and turning angles
+pdf(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/results/HMM/parameters.pdf")
+lapply(batsData, function(x){
+  tryCatch({
+    plot(x, ask=FALSE)
+  },error=function(e) finally = print("f'd up"))
+})
+dev.off()
+```
+
+### Classify behaviors: foraging and commuting with a HMM 2 state model
+
+```{r pressure, results=FALSE}
+# estimate parameters for HMM
+batsData.df <- do.call(rbind, batsData)
+
+# calculates normal distribution from data and select 2 values from it
+mixHMM2 <- normalmixEM(na.omit(batsData.df$step), k = 2)
+# plot(mixHMM,which=3)
+idx2 <- order(mixHMM2$mu)
+# select step length values
+mu02 <- c(mixHMM2$mu[idx2[1]], mixHMM2$mu[idx2[2]])
+# select step SD
+sigma02 <- c(mixHMM2$sigma[idx2[1]],  mixHMM2$sigma[idx2[2]]) # step SD
+
+
+## Fitting HMM with 2 states
+state2Names <- c("state1", "state2")
+
+# initial parameters
+step2ParMean <- mu02
+step2ParSD <- sigma02
+zero2mass0 <- c(0.01, 0.01)
+step2Par0 <- c(step2ParMean,step2ParSD)#zero2mass0
+angle2Par0 <- c(0.5,0.1)
+dist = list(step = "gamma", angle = "wrpcauchy")
+m <- fitHMM(data=batsData.df, 
+            nbStates=2, 
+            dist=dist,
+            Par0=list(step=step2Par0, angle=angle2Par0),
+            stateNames = state2Names)
+
+# save results 
+pdf(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/results/HMM/HMM_2states.pdf")
+plot(m, plotCI = TRUE, ask=FALSE)
+dev.off()
+```
+
+### Checking classification from the model and add it with the original data frame
+```{r, results=FALSE}
+# viterbi function reconstructs most probably states sequence for each bat
+m$data$HMM2 <- viterbi(m) 
+m$data$HMM2_prob <- stateProbs(m)
+
+# order data again
+females_bocas <- females_bocas[order(females_bocas$ID_batday, females_bocas$timestamp),]
+
+# remove the NAs that were included in the beggining
+m2_df <- m$data[which(!is.na(m$data$x)),]
+
+# adding the states to the initial data frame
+females_bocas$HMM <- m2_df$HMM2[match(females_bocas$timestamp, m2_df$date)]
+females_bocas$HMMprob <- m2_df$HMM2HMM2_prob[match(females_bocas$timestamp, m2_df$date)]
+females_bocas$turningangle <- m2_df$angle[match(females_bocas$timestamp, m2_df$date)]
+females_bocas$step <- m2_df$step[match(females_bocas$timestamp, m2_df$date)]
+```
+
+### Change classification points which are wrongly assigned in either of the behaviors
+
+```{r, results=FALSE}
+# change state numbers to behaviors and adjust manually some of the classification
+females_bocas$behav <- females_bocas$HMM
+females_bocas$behav[which(females_bocas$HMM==2)] <- "commuting"
+females_bocas$behav[which(females_bocas$HMM==1)] <- "foraging"
+unique(females_bocas$behav)
+females_bocas[which(is.na(females_bocas$behav)),]
+females_bocas$behav[(females_bocas$behav=="commuting" & females_bocas$ground_speed<1)] <- "foraging"
+# females_bocas$behav[which(females_bocas$HMM==1 | females_bocas$HMM==2)] <- "foraging"
+# some points that are flying are classified as foraging
+females_bocas$behav[(females_bocas$behav=="foraging" & females_bocas$ground_speed>3)] <- "commuting"
+
+# checking for na's
+females_bocas <- females_bocas[which(!is.na(females_bocas$behav)),]
+
+# plot foraging points results
+mapview::mapView(females_bocas[females_bocas$behav=="foraging",], xcol="location_long", ycol="location_lat", zcol="behav", legend=F, crs="EPSG:4326") #as points
+
+# plot foraging points results
+mapview::mapView(females_bocas, xcol="location_long", ycol="location_lat", zcol="behav", legend=F, crs="EPSG:4326") #as points
+
+# look at the histograms of speed and turning angle
+hist(females_bocas[females_bocas$behav=="commuting",]$ground_speed)
+hist(females_bocas[females_bocas$behav=="foraging",]$ground_speed)
+hist(females_bocas[females_bocas$behav=="commuting",]$turningangle)
+hist(females_bocas[females_bocas$behav=="foraging",]$turningangle)
+
+# save RData
+save(females_bocas,file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PLosOne/data/females_HMMbehaviors.RData")
+```
+
+
+### Classify behaviors: foraging and commuting with a HMM 3 state model to compare with the 2 state model ## no need to be run
+
+```{r, results=FALSE}
+# calculates normal distribution from data and select 3 values from it
+mixHMM3 <- normalmixEM(na.omit(batsData.df$step), k = 3)
+# plot(mixHMM,which=3)
+idx <- order(mixHMM3$mu)
+# select step length values for the three states
+mu03 <- c(mixHMM3$mu[idx[1]], mixHMM3$mu[idx[2]], mixHMM3$mu[idx[3]])
+# select step SD for the three states
+sigma03 <- c(mixHMM3$sigma[idx[1]],  mixHMM3$sigma[idx[2]],mixHMM3$sigma[idx[3]]) # step SD
+
+# look at what distribution to use
+library(fitdistrplus)
+# step length
+plotdist(batsData.df$step[!is.na(batsData.df$step)], histo = TRUE, demp = TRUE)
+descdist(batsData.df$step[!is.na(batsData.df$step)], boot = 1000, method="unbiased")#beta
+# turning angle
+plotdist(as.numeric(batsData.df$angle[!is.na(batsData.df$angle)]), histo = TRUE, demp = TRUE)
+descdist(as.numeric(batsData.df$angle[!is.na(batsData.df$angle)]), boot = 1000, method="unbiased")
+
+# fitting HMM for whole individuals with 3 states
+state3Names <- c("state 1","state 2", "state 3")
+# initial parameters
+step3ParMean <- mu03
+step3ParSD <- sigma03
+zero3mass0 <- c(0.01, 0.01, 0.01)
+step3Par0 <- c(step3ParMean,step3ParSD)#zero3mass0
+angle3Par0 <- c(0.5,0.1,0.01)
+dist = list(step = "gamma", angle = "wrpcauchy")
+m3 <-fitHMM(data=batsData.df, 
+            nbStates=3, 
+            dist=dist,
+            Par0=list(step=step3Par0, angle=angle3Par0),
+            stateNames = state3Names)
+# print model
+m3
+
+# look at classification
+pdf(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/results/HMM/HMM_3states.pdf")
+plot(m3, plotCI = TRUE, ask=FALSE) 
+dev.off()
+
+# checking the two models
+AIC(m, m3) # model with 3-states has lower AIC, but we will use the 2-state model as resting classification is not reliable
+```
