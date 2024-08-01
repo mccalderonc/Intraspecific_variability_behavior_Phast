@@ -33,4 +33,5 @@ Note: for parts of the code either movebank accounts credentials, or stadiamps k
 
 ### References
 McCracken GF, Bradbury, Jack W. Social organization and kinship in the polygynous bat Phyllostomus hastatus. Behav Ecol and Sociobiol. 1981;8(1):11–34.
+
 Wilkinson GS, Wenrick Boughman J. Social calls coordinate foraging in greater spear-nosed bats. Anim Behav. 1998 Feb;55(2):337–50. 
