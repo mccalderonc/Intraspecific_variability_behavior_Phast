@@ -2,12 +2,12 @@
 
 The following code test social foraging behavior at different sections of a bat foraging trajectory. Our results is compared to the behavior of P. hastatus Trinidad population (McCracken and Bradbury, 1981; Wilkinson and Boughman 1998), to better understand the extent of intraspecific variation in sociality among P. hastatus. 
 
-In thiscode we renamed the initial name of the groups to avoid misunderstanding with the figure labeling of the manuscript, as follows:
-Group D= Group F1
-Group G= Group F2
-Group DG= Group F1F2
-Group B= Group F3
-Group C1= Group F4
+In this code we renamed the initial name of the groups to avoid misunderstanding with the figure labeling of the manuscript, as follows:
+- Group D= Group F1
+- Group G= Group F2
+- Group DG= Group F1F2
+- Group B= Group F3
+- Group C1= Group F4
 
 The code should be run as follows:
 
