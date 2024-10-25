@@ -1,7 +1,7 @@
 ---
 title: "Dynamic Time Warping (DTW) to calculate path similarity"
 output: html_document
-date: "2024-07-25"
+date: "2024-10-25"
 Author: Camila Calderon
 ---
 
@@ -155,10 +155,10 @@ results_list <- lapply(names(feb_date), function(date) {
   
 # compute DTW distance for each pair of individuals
   dtw_distances <- mapply(function(ind1, ind2) {
-    dtw_result <- dtw(indiv_splits[[ind1]][, c("location_lat", "location_long")],
-                      indiv_splits[[ind2]][, c("location_lat", "location_long")],
+    dtw_result <- dtw(indiv_splits[[ind1]][, c("coords.x1", "coords.x2")],
+                      indiv_splits[[ind2]][, c("coords.x1", "coords.x2")],
                       keep.internals = TRUE)
-    dtw_result$distance  # extracting the DTW distance
+    dtw_result$distance  # extracting the DTWstep.pattern = dtw_result$distance  # extracting the DTW distance
   }, pairs$Var1, pairs$Var2, SIMPLIFY = FALSE)
   
   # combine the results with pair information and include the date
@@ -238,7 +238,7 @@ fit_weib <- fitdist(all_results$Distance, "weibull")
 # assuming fit_norm has estimated parameters mean (mle) and standard deviation (sd)
 plotdist(all_results$Distance, "norm", para = list(mean = fit_norm$estimate["mean"], sd = fit_norm$estimate["sd"]), histo = TRUE, demp = TRUE)
 cdfcomp(list(fit_norm, fit_gamma, fit_weib), legendtext = c("Normal", "Gamma", "Weibull"))
-# gamma is the best distribution
+# weibull is the best distribution
 
 # test model with a Gamma distribution
 library(lme4)
@@ -260,6 +260,7 @@ plot(mod_bw)
 ```{r}
 # create a new data frame for prediction
 new_data <- all_results
+
 new_data$predicted_distance <- predict(mod_bw, new_data, type = "response")
 
 # plotting model results
@@ -282,7 +283,7 @@ dist_sim <- ggplot(new_data, aes(x = samegroup, color = group, group=samegroup, 
 dist_sim 
 ```
 
-Independent of the group membership, the DTW index of commuting paths within and between groups did not differ. 
+Independent of the group membership, the DTW distance value of commuting paths within and between groups did not differ. 
 
 ### Figure 3
 
@@ -300,10 +301,10 @@ cave_sf <- st_as_sf(x = cave,
 
 
 # plot using stamen map from Bocas
-register_stadiamaps("useownkey") 
+register_stadiamaps("myAPIkey") 
 
 # create a bounding box
-e <- make_bbox(location_long, location_lat, data = feb, f = .4)
+e <- make_bbox(location_long, location_lat, data = females_bocas, f = .4)
 
 # create group variable
 data.commu.out$group <- NA
@@ -344,5 +345,5 @@ library(patchwork)
 ((commute_plot/ (Fig3bc | dist_sim)) + plot_layout(widths = unit(c(1,1),  c("null","null"))) + plot_layout(axis_titles = "collect") + plot_annotation(tag_levels = "A") &
 theme(plot.tag  = element_text(face = 'bold', size=20), axis.title = element_text(face = 'bold', size=20), axis.title.x = element_text(size = 20), axis.title.y=element_text(size=20), axis.text.y = element_text(size=14), axis.text.x = element_text(size=14), legend.title = element_text(size=16), legend.text = element_text(size=16)))
 
-ggsave(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig3.pdf", width=15, height=10)
+ggsave(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig3_option2.pdf", width=15, height=12)
 ```

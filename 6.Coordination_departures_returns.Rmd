@@ -19,7 +19,7 @@ load(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/data/females_HMMb
 
 ### Extract foraging points from data set of la Gruta colony in February
 
-Here I am adding a variable that counts the length of consecutive commuting and foraging points. This will be used to filter only foraging points that contains 4 or more points in row. I will also filter commuting points that have 5 or more points in a row.
+Here I am adding a variable that counts the length of consecutive commuting and foraging points. This will be used to filter commuting points that have 5 or more points in a row.
 
 ```{r, results=FALSE}
 hast_df <- females_bocas
@@ -44,43 +44,6 @@ bats_feb <- hast_df %>%
 # split data frame by ID
 bats_feb_split <- split(bats_feb, bats_feb$ID)
 
-# foraging spots which >= 4 foraging points and stays longer than 8 minutes
-foragingdata <- lapply(bats_feb_split, function(x){
-  filter(x, c(behav=="foraging" & n>=4 & location_long<=-82.35))
-})
-
-# for some reason one individual has no more than 3 foraging in a row, I had to add it manually
-x <- data.frame(bats_feb_split[["39500E37_D_2022-02-04"]] %>%
-  filter(behav=="foraging"& location_long<=-82.35))
-
-foragingdata[["39500E37_D_2022-02-04"]] <- x
-
-# take first foraging point for each ID
-firstforaging <- rbindlist(lapply(foragingdata, function(x){
-  dplyr::slice_head(x, n=1)
-}))
-
-# take the last foraging point for each ID
-lastforaging <- rbindlist(lapply(foragingdata, function(x){
-  slice(x, which.max(1:n()))
-}))
-
-idday <- unique(bats_feb$ID)
-```
-
-### Plot foraging locations selected to verify filtering
-
-```{r}
-pdf("~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/results/foragingearly2022_check.pdf")
-for (i in 1:length(idday)){
-  day_phast <- bats_feb[bats_feb$ID == idday[i],]
-  day_phast2 <- firstforaging[firstforaging$ID == idday[i],]
-    #create plot
-   plot(day_phast$location_long, day_phast$location_lat, main=idday[i])
-points(day_phast2$location_long, day_phast2$location_lat, col="red")
-}
-while (!is.null(dev.list()))  
-  dev.off()
 ```
 
 ### Select commuting paths to extract departure times
@@ -98,12 +61,6 @@ commu_feb_dep <- bats_commufeb %>%
 # remove 2D507235_G_2022−01−31
 commu_feb_dep <- commu_feb_dep[commu_feb_dep$ID!="2D507235_G_2022-01-31",]
 
-# add departure lat, long, timestamp and group id to the data frame
-commu_feb_dep$lat_foraging <-  firstforaging$location_lat
-commu_feb_dep$long_foraging <-  firstforaging$location_long
-commu_feb_dep$timestamp_foraging <-  firstforaging$timestamp
-commu_feb_dep$cave_group <-  firstforaging$group_id
-
 # split data frame by date
 commu_feb_dep_date <- split(commu_feb_dep, f=commu_feb_dep$date)
 
@@ -120,17 +77,11 @@ commu_feb_ret <- bats_commufeb %>%
 # remove 2D507235_G_2022−01−31
 commu_feb_ret <- commu_feb_ret[commu_feb_ret$ID!="2D507235_G_2022-01-31",]
 
-# add return lat, long, timestamp and group id to the data frame
-commu_feb_ret$lat_foraging <-  lastforaging$location_lat
-commu_feb_ret$long_foraging <-  lastforaging$location_long
-commu_feb_ret$timestamp_foraging <-  lastforaging$timestamp
-commu_feb_ret$cave_group <-  lastforaging$group_id
-
 # split by date
 commu_feb_ret_date <- split(commu_feb_ret, commu_feb_ret$date)
 ```
 
-### Calculate pairwise time difference in departures by date between and within groups
+### Calculate pairwise time difference in departures by date, between and within groups
 
 Here we include days with more than 2 individuals
 
@@ -144,7 +95,7 @@ pair.depdiff <-  rbindlist(lapply(commu_feb_dep_date[c(1:11)], FUN=function(t){
   combi$Deptimediff <- unlist(lapply(1:nrow(combi), function(i){ # calculate time difference between all pairs (in seconds)
     pos.bat1 <- t[t$tag_local_identifier==combi$bat1[i], c('timestamp')] # time for first bat
     pos.bat2 <- t[t$tag_local_identifier==combi$bat2[i], 'timestamp'] # time for second bat
-    return(pos.bat1 - pos.bat2)})) # time in minutes
+    return(difftime(pos.bat1$timestamp, pos.bat2$timestamp, units="mins"))})) # time in minutes
   return(combi)
   }))
 
@@ -158,7 +109,7 @@ pairwisetime_table <- pair.depdiff %>%
 ```
 
 
-### Calculate pairwise time difference in returns by date between and within groups
+### Calculate pairwise time difference in returns by date, between and within groups
 
 ```{r}
 pair.retdiff <-  rbindlist(lapply(commu_feb_ret_date[c(1:11)], FUN=function(t){
@@ -170,7 +121,7 @@ pair.retdiff <-  rbindlist(lapply(commu_feb_ret_date[c(1:11)], FUN=function(t){
   combi$Deptimediff <- unlist(lapply(1:nrow(combi), function(i){ # calculate time difference between all pairs (in seconds)
     pos.bat1 <- t[t$tag_local_identifier==combi$bat1[i], c('timestamp')] # time for first bat
     pos.bat2 <- t[t$tag_local_identifier==combi$bat2[i], 'timestamp'] # time for second bat
-    return(pos.bat1 - pos.bat2)})) # time in seconds
+    return(difftime(pos.bat1$timestamp, pos.bat2$timestamp, units="mins"))})) # time in seconds
   return(combi)
   }))
 
@@ -187,7 +138,7 @@ pairwisetime_table$groups[which(pairwisetime_table$groups=="GD")] <- "DG"
 Here I created a threshold of foraging together or not based on a 2 minute time difference, according to the GPS fix resolution
 
 ```{r}
-# define the threshold
+# define the threshold for departures
 threshold <- 2
 
 # create the new column using ifelse()
@@ -200,186 +151,102 @@ table(pairwisetime_table$together2)
 
 # how many days have less than 3 points?
 table(pairwisetime_table$date)
-
-# first just test departures time difference between and within groups
-ggplot(data=as.data.frame(pairwisetime_table), aes(x=groups, y=Deptimediff, color=groups))+
-  geom_boxplot()+
-  scale_x_discrete(breaks=c("DD", "DG", "GG"), labels=c("F1", "F1F2", "F2"))+
-  geom_jitter()+
-  scale_colour_manual(values = c("#440154FF","grey", "#FDE725FF")) +
-  stat_summary(fun = mean, color = "red") +
-  stat_summary(
-    fun.min = function(x) mean(x) - sd(x), 
-    fun.max = function(x) mean(x) + sd(x), 
-    geom = "errorbar",
-    color = "red",
-    width = .3
-  )+
-  ylab("Departure time difference (mins)")
-
-
-# summary of departure time difference
-dep_sum <- pairwisetime_table %>%
-  group_by(groups)%>%
-  dplyr::summarize(mean=mean(Deptimediff), sd=sd(Deptimediff))
 ```
+
 
 ### Test differences in departure and returns by groups
 ```{r}
+library(lme4)
 # making sure there are no zeros in the data frame
 pairwisetime_table$Deptimediff[which(pairwisetime_table$Deptimediff==0)] <- 0.001
 
 # run a gamma model for the time difference between groups
-m_dep <- glm(Deptimediff~groups , data=pairwisetime_table, family = Gamma("log"))
+m_dep <- glmer(Deptimediff~groups + (1|bats)+(1|date), data=pairwisetime_table, family = Gamma("log"))
 
 summary(m_dep)
 anova(m_dep)
 # there is no departure time difference between or within groups 
 
 # run a gamma model for the time difference between groups
-m_ret <- glm(rettimediff~samegroup , data=pairwisetime_table, family = Gamma("log"))
+m_ret <- glmer(rettimediff~groups + (1|bats)+(1|date), data=pairwisetime_table, family = Gamma("log"))
 
 summary(m_ret)
 anova(m_ret)
-
 ```
 
-### Run second model - Is there coordination in departures and return times?
-
-Is there any indication of coordination in departures by pairs of individuals from the same or different groups?
-
-```{r,warning=FALSE, message=FALSE}
-library(lme4)
-
-# converting samegroup variable to an ordered factor
-pairwisetime_table$samegroup <- factor(pairwisetime_table$samegroup, levels = c("no","yes"))
-
-# binomial model
-m_time <- glmer(as.factor(together2)~as.factor(together)*samegroup + (1|bats), data=pairwisetime_table, family = binomial())
-
-# summary of the model
-summary(m_time)
-
-# summary of the return times
-pairwise_sum <- pairwisetime_table %>%
-  group_by(samegroup, together)%>%
-  dplyr::summarize(mean=mean(rettimediff), sd=sd(rettimediff))
-
-```
-
-### Plot results of previous binomial model 
-```{r,  warning=FALSE, message=FALSE}
-# predicted values
-pv_r <- predict(m_time, type = "response")
-
-# combine predicted values with original data
-pairwisetime_table$pv_r <- pv_r
-
-# plot Figure 2A
-returnplot <- ggplot(pairwisetime_table, aes(x = as.factor(together),  color = groups, group = samegroup, alpha=0.8)) +
-  geom_jitter(aes(y = pv_r), position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0.05))+
-  scale_colour_manual(values=c("#440154FF","grey", "#FDE725FF"), labels=c("F1", "F1F2", "F2"))+
-  stat_summary(aes(y = pv_r), fun = mean, color="black",position = position_dodge(.8)) +#FF9999
-  stat_summary(aes(y = pv_r), fun.data = "mean_sdl",
-    geom = "errorbar",
-    color="black",
-    width = .3, 
-    position = position_dodge(.8)
-  ) +
-  scale_x_discrete(labels=c("no","yes"))+
-  labs(x = "departure together",
-    y = "predicted probability \n of returning together"
-  ) +
-  theme_classic()+
-  guides(alpha="none")+
-  theme(legend.position = "bottom")
-
-returnplot
-
-```
-
-### Extract pairwise distance difference between all individuals
-
-```{r, results=FALSE}
-# calculate pairwise distance difference between individuals
-pair.distdiff <-  rbindlist(lapply(commu_feb_date[c(1:11)], FUN=function(t){
-  combi <- t(combn(t$tag_local_identifier, 2)) # all unique pairwise combinations of individuals
-  date <- unique(date(t$timestamps))#UTC time
-  combi <- data.frame(bat1=combi[,1], bat2=combi[,2], date=date, stringsAsFactors=F) # set up a new data frame
-  combi <- combi[combi$bat1!=combi$bat2,]# just in case that a single bat has two readings for the same timestamp
-  
- combi$geo.dist <- unlist(lapply(1:nrow(combi), function(i){ # calculate geographic distance between all pairs (in meters!!)
-    pos.bat1 <- t[t$tag_local_identifier==combi$bat1[i], c('x', 'y')] # location for first bat
-    pos.bat2 <- t[t$tag_local_identifier==combi$bat2[i], c('x', 'y')] # location for second bat
-    return(pointDistance(pos.bat1, pos.bat2, lonlat = FALSE))})) # geographic distance between bats (in meters)
-  return(combi)
-  }))
-
-# add pairwise distance to the pairwise table
-pairwisetime_table$distdiff <- pair.distdiff$geo.dist
-
-```
-
-
-### Poisson model to test if bats that depart together stay together in the foraging areas
-
-```{r,  warning=FALSE, message=FALSE}
-# convert variable to factor
-pairwisetime_table$samegroup <- factor(pairwisetime_table$samegroup, levels=c("no","yes"))
-
-# Possion model
-m_df_all<- glmer(as.integer(distdiff)~as.factor(together)*samegroup + (1|bats)+ (0 + together|bats), data=pairwisetime_table, family = poisson(link = "log"))
-
-# summary of the model
-m_df_all
-summary(m_df_all)
-
-# check model
-plot(m_df_all)
-
-```
-### Plot model results
+### Plot departures and return with predicted values 
 ```{r}
+#set same group variable as factor
+pairwisetime_table$samegroup_f <- factor(pairwisetime_table$samegroup, levels=c("yes","no"))
+
 # predicted values
-predicted_values <- predict(m_df_all, type = "response")
+dep_r <- predict(m_dep, type = "response")
 
 # combine predicted values with original data
-pairwisetime_table$predicted <- predicted_values
+pairwisetime_table$dep_r <- dep_r
 
-# plotting observed and predicted values based on 'together' and 'samegroup'
-pairdistplot <- ggplot(pairwisetime_table, aes(x = as.factor(together), color= groups, group = samegroup)) +
-  scale_colour_manual(values=c("#440154FF","grey", "#FDE725FF"), labels=c("F1", "F1F2", "F2"))+
-  geom_jitter(aes(y = distdiff, group=samegroup, alpha = 0.5), position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0.1)) +
-  stat_summary(mapping=aes(y=predicted, group=samegroup),
-    fun.min = function(x) mean(x) - sd(x),
-    fun.max = function(x) mean(x) + sd(x),
+dep <- ggplot(data=as.data.frame(pairwisetime_table), aes(x=samegroup_f, y=Deptimediff, color=groups, alpha=0.8))+
+  #geom_boxplot()+
+  #scale_x_discrete(breaks=c("DD", "DG", "GG"), labels=c("F1", "F1F2", "F2"))+
+  geom_jitter(aes(y = Deptimediff), position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0.05))+
+  scale_colour_manual(aes(y= dep_r),values = c("#440154FF","grey", "#FDE725FF")) +
+  stat_summary(aes(y= dep_r,group=groups),fun = mean, color = "black",
+    position = position_dodge(.8)) +
+  stat_summary(aes(group=groups),
+    fun.min = function(x) mean(x) - sd(x), 
+    fun.max = function(x) mean(x) + sd(x), 
     geom = "errorbar",
-    width = .3, color="black",
-   position = position_dodge(.8)
+    color = "black",
+    width = .3,
+    position = position_dodge(.8)
   )+
-  stat_summary(aes(y=predicted, group=samegroup), fun = mean, geom='point',
-               position = position_dodge(.8), size = 3,color="black")+
-  xlab("departure together")+
-  ylab("pairwise foraging distance \n between dyads (m)")+
-  scale_x_discrete(labels=c("no","yes"))+
-  guides(alpha="none")+
+  ylab("departure time \n difference (mins)")+
+  xlab("same group")+
   theme_classic()+
-  theme(legend.position = "bottom")
+  guides(color="none", alpha="none")
 
-pairdistplot
+
+# predicted values
+ret_r <- predict(m_ret, type = "response")
+
+# combine predicted values with original data
+pairwisetime_table$ret_r <- ret_r
+
+# plot return time difference
+ret <- ggplot(data=as.data.frame(pairwisetime_table), aes(x=samegroup_f, y=rettimediff, color=groups, alpha=0.8))+
+  #geom_boxplot()+
+  #scale_x_discrete(breaks=c("DD", "DG", "GG"), labels=c("F1", "F1F2", "F2"))+
+  geom_jitter(aes(y = rettimediff), position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0.05))+
+  scale_colour_manual(aes(y=ret_r), values = c("#440154FF","grey", "#FDE725FF")) +
+  stat_summary(aes(y=ret_r, group=groups),fun = mean, color = "black",,
+    position = position_dodge(.8)) +
+  stat_summary(aes(group=groups),
+    fun.min = function(x) mean(x) - sd(x), 
+    fun.max = function(x) mean(x) + sd(x), 
+    geom = "errorbar",
+    color = "black",
+    width = .3,
+    position = position_dodge(.8)
+  )+
+  ylab("return time \n difference (mins)")+
+  xlab("same group")+
+  theme_classic()+
+  guides(color="none", alpha="none")
+
+ret
 ```
+
 
 ### Plot final figure of departure, return and foraging area coordination
 
 ```{r}
 library(patchwork)
 
-Fig3bc <- (((returnplot | pairdistplot) + plot_layout(axis_titles = "collect", guides="collect")) + plot_annotation(tag_levels = "A") & 
-               theme(legend.position='bottom', plot.tag  = element_text(face = 'bold', size=24), axis.title = element_text(face = 'bold', size=24), axis.title.x = element_text(size = 24), axis.title.y=element_text(size=24), axis.text.y = element_text(size=14), axis.text.x = element_text(size=14)))
+
+Fig3bc <- (((dep|ret) + plot_layout(axis_titles = "collect", guides="collect")) + plot_annotation(tag_levels = "A") & 
+               theme(legend.position='bottom', plot.tag  = element_text(face = 'bold', size=24), axis.title = element_text(face = 'bold', size=24), axis.title.x = element_text(size = 24), axis.title.y=element_text(size=24), axis.text.y = element_text(size=14), axis.text.x = element_text(size=14)))#pairdistplot
 
 Fig3bc 
-
-ggsave(file="~/ownCloud/PhDLife/P.hastatus/Thesis/Paper2/PlosOne/figures/Fig3AB.pdf", width = 15, height =7)
 ```
 
 ## Check pairwise time difference for female bats in 2016
@@ -423,7 +290,7 @@ pair.depdiff_2016 <-  rbindlist(lapply(commu_2016_dep_split, FUN=function(t){
   combi$Deptimediff <- unlist(lapply(1:nrow(combi), function(i){ # c
     pos.bat1 <- t[t$tag_local_identifier==combi$bat1[i], c('timestamp')] # time for first bat
     pos.bat2 <- t[t$tag_local_identifier==combi$bat2[i], 'timestamp'] # time for second bat
-    return(pos.bat1 - pos.bat2)})) # time difference between bats (in seconds)
+    return(difftime(pos.bat1$timestamp, pos.bat2$timestamp, units="mins"))})) # time difference between bats (in seconds)
   return(combi)
   }))
 
@@ -458,7 +325,7 @@ pair.retdiff_2016 <-  rbindlist(lapply(commu_2016_ret_split, FUN=function(t){
   combi$Deptimediff <- unlist(lapply(1:nrow(combi), function(i){ # calculate geographic distance between all pairs (in meters!!)
     pos.bat1 <- t[t$tag_local_identifier==combi$bat1[i], c('timestamp')] # time for first bat
     pos.bat2 <- t[t$tag_local_identifier==combi$bat2[i], 'timestamp'] # time for second bat
-    return(pos.bat1 - pos.bat2)})) # time difference between bats (in minutes)
+    return(difftime(pos.bat1$timestamp, pos.bat2$timestamp, units="mins"))})) # time difference between bats (in minutes)
   return(combi)
   }))
 
