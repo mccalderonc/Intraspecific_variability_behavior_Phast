@@ -28,9 +28,16 @@ The code should be run as follows:
 
 9.Activity_budgets.Rmd
 
-Note: for parts of the code either movebank accounts credentials, or stadiamps keys are needed.
+Note: for parts of the code a stadiamps API key is needed. The data to run the code is available at:
+
+O’Mara, MT, Dechmann, DKN. 2023. Data from: Greater spear nosed bats commute long distances alone, rest together, but forage apart. Movebank Data Repository. (doi:https://doi.org/10.5441/001/1.282)
+
+Calderon-Capote MC, van Toor ML, O'Mara MT,  Bayer TD, Crofoot MC, Dechmann DKN. [Year]. Data from: Consistent long-distance foraging flights across years and seasons at colony level in a Neotropical bat [2021-2022]. Movebank Data Repository. https://doi.org/10.5441/001/1.321 (will be available soon)
+
 
 ### References
 McCracken GF, Bradbury, Jack W. Social organization and kinship in the polygynous bat Phyllostomus hastatus. Behav Ecol and Sociobiol. 1981;8(1):11–34.
 
 Wilkinson GS, Wenrick Boughman J. Social calls coordinate foraging in greater spear-nosed bats. Anim Behav. 1998 Feb;55(2):337–50. 
+
+
