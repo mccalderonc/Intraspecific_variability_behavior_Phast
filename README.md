@@ -1,6 +1,6 @@
 # Intraspecific variability of social structure and linked foraging behavior in a widespread bat species
 
-The following code test social foraging behavior at different sections of a bat foraging activity. Our results are compared to the behavior of P. hastatus Trinidad population (McCracken and Bradbury, 1981; Wilkinson and Boughman 1998), to better understand the extent of intraspecific variation in sociality among P. hastatus. This code is part of the following publicaton:
+This repository investigates social foraging behavior across different phases of bats’ foraging activity. We compare our results to the foraging behavior of P. hastatus in the Trinidad population (McCracken and Bradbury, 1981; Wilkinson and Boughman, 1998) to better understand the extent of intraspecific variation in sociality within P. hastatus. This repository is part of the following publicaton:
 
 Calderón-Capote MC, O’Mara MT, Crofoot MC, Dechmann DK (2025) Intraspecific variability of social structure and linked foraging behavior in females of a widespread bat species (Phyllostomus hastatus). PLoS ONE 20(3): e0313782. https://doi.org/10.1371/journal.pone.0313782.
 
